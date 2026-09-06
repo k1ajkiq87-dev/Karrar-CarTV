@@ -1,0 +1,91 @@
+name: Update Karrar CarTV
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build playlist
+        run: |
+          python3 - <<'PY'
+          import urllib.request
+          import re
+
+          sources = [
+              ("عراقي", "https://iptv-org.github.io/iptv/countries/iq.m3u", 30),
+              ("عربي", "https://iptv-org.github.io/iptv/languages/ara.m3u", 40),
+              ("أغاني وموسيقى", "https://iptv-org.github.io/iptv/categories/music.m3u", 20),
+              ("أفلام", "https://iptv-org.github.io/iptv/categories/movies.m3u", 20),
+              ("أطفال", "https://iptv-org.github.io/iptv/categories/kids.m3u", 20),
+              ("وثائقي", "https://iptv-org.github.io/iptv/categories/documentary.m3u", 15),
+              ("رياضة", "https://iptv-org.github.io/iptv/categories/sports.m3u", 15),
+              ("أخبار", "https://iptv-org.github.io/iptv/categories/news.m3u", 10),
+              ("أجنبي", "https://iptv-org.github.io/iptv/languages/eng.m3u", 10),
+          ]
+
+          output = ["#EXTM3U"]
+          used_urls = set()
+
+          for group, url, limit in sources:
+              try:
+                  data = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", errors="ignore")
+              except Exception as e:
+                  print("Failed:", url, e)
+                  continue
+
+              lines = data.splitlines()
+              count = 0
+              extinf = None
+
+              for line in lines:
+                  line = line.strip()
+
+                  if line.startswith("#EXTINF:"):
+                      extinf = line
+                      continue
+
+                  if extinf and line.startswith(("http://", "https://")):
+                      if line in used_urls:
+                          extinf = None
+                          continue
+
+                      used_urls.add(line)
+
+                      if 'group-title="' in extinf:
+                          extinf = re.sub(r'group-title="[^"]*"', f'group-title="{group}"', extinf)
+                      else:
+                          extinf = extinf.replace(",", f' group-title="{group}",', 1)
+
+                      output.append(extinf)
+                      output.append(line)
+
+                      count += 1
+                      extinf = None
+
+                      if count >= limit:
+                          break
+
+          with open("playlist.m3u", "w", encoding="utf-8") as f:
+              f.write("\n".join(output) + "\n")
+
+          print("Channels:", (len(output) - 1) // 2)
+          PY
+
+      - name: Commit updated playlist
+        run: |
+          git config user.name "Karrar-CarTV Bot"
+          git config user.email "actions@github.com"
+          git add playlist.m3u
+          git diff --cached --quiet || git commit -m "Auto update CarTV playlist"
+          git push
