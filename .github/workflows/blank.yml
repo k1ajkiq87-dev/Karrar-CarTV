@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/blank.yml"
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * *"
@@ -18,11 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build playlist
+      - name: Build clean CarTV playlist
         run: |
           python3 - <<'PY'
           import urllib.request
-          import re
 
           sources = [
               ("عراقي", "https://iptv-org.github.io/iptv/countries/iq.m3u", 30),
@@ -36,59 +37,62 @@ jobs:
               ("أجنبي", "https://iptv-org.github.io/iptv/languages/eng.m3u", 15),
           ]
 
-          out = ["#EXTM3U"]
-          used = set()
+          output = ["#EXTM3U"]
+          used_urls = set()
 
-          for group, url, limit in sources:
+          for group, source_url, limit in sources:
               try:
-                  text = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", "ignore")
+                  req = urllib.request.Request(
+                      source_url,
+                      headers={"User-Agent": "Mozilla/5.0"}
+                  )
+                  text = urllib.request.urlopen(
+                      req,
+                      timeout=30
+                  ).read().decode("utf-8", "ignore")
               except Exception as e:
-                  print("FAILED", url, e)
+                  print("FAILED:", source_url, e)
                   continue
 
-              info = None
+              current_info = None
               count = 0
 
               for line in text.splitlines():
                   line = line.strip()
 
                   if line.startswith("#EXTINF:"):
-                      info = line
+                      current_info = line
                       continue
 
-                  if info and line.startswith(("http://", "https://")):
-                      if line in used:
-                          info = None
+                  if current_info and line.startswith(("http://", "https://")):
+                      if line in used_urls:
+                          current_info = None
                           continue
 
-                      used.add(line)
+                      used_urls.add(line)
 
-                      if 'group-title="' in info:
-                          info = re.sub(
-                              r'group-title="[^"]*"',
-                              f'group-title="{group}"',
-                              info
-                          )
+                      if "," in current_info:
+                          channel_name = current_info.rsplit(",", 1)[1].strip()
                       else:
-                          info = info.replace(
-                              ",",
-                              f' group-title="{group}",',
-                              1
-                          )
+                          channel_name = "Channel"
 
-                      out.append(info)
-                      out.append(line)
+                      channel_name = channel_name.replace('"', "'")
+
+                      output.append(
+                          f'#EXTINF:-1 group-title="{group}",{channel_name}'
+                      )
+                      output.append(line)
 
                       count += 1
-                      info = None
+                      current_info = None
 
                       if count >= limit:
                           break
 
           with open("playlist.m3u", "w", encoding="utf-8") as f:
-              f.write("\\n".join(out) + "\\n")
+              f.write("\n".join(output) + "\n")
 
-          print("Total channels:", (len(out) - 1) // 2)
+          print("Total channels:", (len(output) - 1) // 2)
           PY
 
       - name: Save playlist
@@ -96,5 +100,5 @@ jobs:
           git config user.name "Karrar-CarTV Bot"
           git config user.email "actions@github.com"
           git add playlist.m3u
-          git diff --cached --quiet || git commit -m "Update CarTV channels"
+          git diff --cached --quiet || git commit -m "Update clean CarTV playlist"
           git push
